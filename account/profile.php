@@ -12,31 +12,55 @@ function profile_resolve_user_store(): array {
         return $store;
     }
 
-    // Force "core" as the authoritative users DB.
-    // Assumes get_pdo('core') is configured for your core_db database.
-    $pdo = get_pdo('core');
+    $core = core_pdo_optional();
+    $columns = [];
 
-    // Sanity check: make sure core.users looks like we expect
-    $cols = [];
+    if ($core) {
+        try {
+            $columns = $core->query('SHOW COLUMNS FROM `users`')->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            $columns = array_map('strval', $columns);
+            if (in_array('pass_hash', $columns, true)) {
+                return $store = [
+                    'db_key'          => 'core',
+                    'schema'          => 'core',
+                    'password_column' => 'pass_hash',
+                    'role_column'     => 'role_id',
+                    'pdo'             => $core,
+                    'columns'         => $columns,
+                ];
+            }
+            try {
+                error_log('core.users missing pass_hash; falling back to legacy users table.');
+            } catch (Throwable $_) {}
+        } catch (Throwable $e) {
+            try {
+                error_log('Unable to inspect core.users; using legacy users table: ' . $e->getMessage());
+            } catch (Throwable $_) {}
+        }
+    }
+
+    $apps = get_pdo();
     try {
-        $cols = $pdo->query('SHOW COLUMNS FROM `users`')->fetchAll(PDO::FETCH_COLUMN) ?: [];
-        $cols = array_map('strval', $cols);
+        $columns = $apps->query('SHOW COLUMNS FROM `users`')->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        $columns = array_map('strval', $columns);
     } catch (Throwable $e) {
-        throw new RuntimeException('Could not read columns from core.users');
+        $columns = [];
     }
 
-    if (!in_array('pass_hash', $cols, true)) {
-        throw new RuntimeException('core.users is missing expected column pass_hash');
+    $passwordColumn = 'password_hash';
+    if (in_array('pass_hash', $columns, true)) {
+        $passwordColumn = 'pass_hash';
+    } elseif (in_array('password_hash', $columns, true)) {
+        $passwordColumn = 'password_hash';
     }
 
-    // Cache the chosen store
     $store = [
-        'db_key'          => 'core',
-        'schema'          => 'core',
-        'password_column' => 'pass_hash',
-        'role_column'     => 'role_id',
-        'pdo'             => $pdo,
-        'columns'         => $cols,
+        'db_key'          => 'apps',
+        'schema'          => 'punchlist',
+        'password_column' => $passwordColumn,
+        'role_column'     => 'role',
+        'pdo'             => $apps,
+        'columns'         => $columns,
     ];
     return $store;
 }
@@ -72,7 +96,11 @@ function fetch_user(PDO $pdo, int $id): ?array
              . 'LEFT JOIN sectors s ON s.id = u.sector_id '
              . 'WHERE u.id = ?';
     } else {
-        $sql = 'SELECT id, email, password_hash, role, created_at, NULL AS notification_email FROM users WHERE id = ?';
+        $passwordColumn = profile_password_column();
+        $sql = sprintf(
+            'SELECT id, email, `%s` AS password_hash, role, created_at, NULL AS notification_email FROM users WHERE id = ?',
+            $passwordColumn
+        );
     }
 
     $st = $pdo->prepare($sql);
@@ -100,11 +128,13 @@ function fetch_user(PDO $pdo, int $id): ?array
 function profile_sync_shadow_email(int $userId, string $email, string $sourceSchema): void
 {
     if ($sourceSchema !== 'core') {
-        try {
-            $core = get_pdo('core');
-            $stmt = $core->prepare('UPDATE `users` SET `email` = ? WHERE `id` = ?');
-            $stmt->execute([$email, $userId]);
-        } catch (Throwable $e) {
+        $core = core_pdo_optional();
+        if ($core) {
+            try {
+                $stmt = $core->prepare('UPDATE `users` SET `email` = ? WHERE `id` = ?');
+                $stmt->execute([$email, $userId]);
+            } catch (Throwable $e) {
+            }
         }
     }
     if ($sourceSchema !== 'punchlist') {
@@ -120,18 +150,28 @@ function profile_sync_shadow_email(int $userId, string $email, string $sourceSch
 function profile_sync_shadow_password(int $userId, string $hash, string $sourceSchema): void
 {
     if ($sourceSchema !== 'core') {
-        try {
-            $core = get_pdo('core');
-            $stmt = $core->prepare('UPDATE `users` SET `pass_hash` = ? WHERE `id` = ?');
-            $stmt->execute([$hash, $userId]);
-        } catch (Throwable $e) {
+        $core = core_pdo_optional();
+        if ($core) {
+            try {
+                $stmt = $core->prepare('UPDATE `users` SET `pass_hash` = ? WHERE `id` = ?');
+                $stmt->execute([$hash, $userId]);
+            } catch (Throwable $e) {
+            }
         }
     }
     if ($sourceSchema !== 'punchlist') {
         try {
             $apps = get_pdo();
-            $stmt = $apps->prepare('UPDATE `users` SET `password_hash` = ? WHERE `id` = ?');
-            $stmt->execute([$hash, $userId]);
+            try {
+                $stmt = $apps->prepare('UPDATE `users` SET `password_hash` = ? WHERE `id` = ?');
+                $stmt->execute([$hash, $userId]);
+            } catch (Throwable $e) {
+                try {
+                    $stmt = $apps->prepare('UPDATE `users` SET `pass_hash` = ? WHERE `id` = ?');
+                    $stmt->execute([$hash, $userId]);
+                } catch (Throwable $_) {
+                }
+            }
         } catch (Throwable $e) {
         }
     }
@@ -260,7 +300,7 @@ function profile_summarize_user_agent(?string $ua): string
 function fetch_recent_security_events(int $userId, int $limit = 6): array
 {
     try {
-        $pdo = get_pdo('core');
+        $pdo = get_pdo('core', false);
     } catch (Throwable $e) {
         return [];
     }

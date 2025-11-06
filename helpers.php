@@ -76,7 +76,7 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
      * Return a PDO connection to either the application DB ("apps" = punchlist)
      * or the core governance DB ("core" = users/roles/activity).
      */
-    function get_pdo(string $which = 'apps'): PDO {
+    function get_pdo(string $which = 'apps', bool $allowFallback = true): PDO {
         static $pool     = [];
         static $failures = [];
 
@@ -85,11 +85,20 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
         }
 
         if (isset($failures[$which])) {
-            if ($which === 'apps') {
+            $previous = $failures[$which];
+            if ($which === 'apps' || !$allowFallback) {
+                if ($previous instanceof Throwable) {
+                    throw new RuntimeException(
+                        'Database connection previously failed: ' . $previous->getMessage(),
+                        0,
+                        $previous
+                    );
+                }
+
                 throw new RuntimeException('Database connection previously failed.');
             }
 
-            return $pool[$which] = get_pdo('apps');
+            return $pool[$which] = get_pdo('apps', $allowFallback);
         }
 
         if ($which === 'core') {
@@ -123,7 +132,15 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
                     error_log('get_pdo failed for ' . $which . ': ' . $e->getMessage());
                 } catch (Throwable $_) {}
 
-                return $pool[$which] = get_pdo('apps');
+                if (!$allowFallback) {
+                    if ($e instanceof Throwable) {
+                        throw new RuntimeException('Unable to connect to database: ' . $e->getMessage(), 0, $e);
+                    }
+
+                    throw new RuntimeException('Unable to connect to database.');
+                }
+
+                return $pool[$which] = get_pdo('apps', $allowFallback);
             }
 
             if ($e instanceof RuntimeException) {
@@ -132,6 +149,53 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
 
             throw new RuntimeException('Unable to connect to database: ' . $e->getMessage(), 0, $e);
         }
+    }
+
+    /**
+     * Try to open the CORE database connection. Returns null if the core DSN is
+     * unreachable and records the failure so subsequent calls in the same
+     * request do not repeatedly attempt the connection.
+     */
+    function core_pdo_optional(): ?PDO {
+        static $attempted = false;
+        static $available = false;
+        static $cached = null;
+
+        if ($attempted) {
+            return $available ? $cached : null;
+        }
+
+        $attempted = true;
+
+        try {
+            $cached = get_pdo('core', false);
+            $available = true;
+            return $cached;
+        } catch (Throwable $e) {
+            $available = false;
+            try {
+                error_log('CORE database unavailable, using legacy fallback: ' . $e->getMessage());
+            } catch (Throwable $_) {}
+        }
+
+        return null;
+    }
+
+    /**
+     * Return the preferred users connection: CORE when reachable, otherwise the
+     * legacy apps database.
+     */
+    function core_pdo_or_apps(): PDO {
+        $core = core_pdo_optional();
+        return $core ?? get_pdo();
+    }
+
+    /**
+     * Helper for quickly checking whether the dedicated CORE schema is
+     * available.
+     */
+    function core_pdo_available(): bool {
+        return core_pdo_optional() instanceof PDO;
     }
     if (!defined('NOTIF_DB_KEY')) define('NOTIF_DB_KEY','core');
 
@@ -151,6 +215,7 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
             'manage_sectors'       => ['label' => 'Manage sectors',           'description' => 'Create sectors, update contact info, and assign leads.'],
             'manage_rooms'         => ['label' => 'Manage rooms',             'description' => 'Maintain building/room directory and metadata.'],
             'notifications_admin'  => ['label' => 'Notifications admin',      'description' => 'Adjust notification defaults and deliverability.'],
+            'view_audit'           => ['label' => 'View audit log',           'description' => 'Review activity log entries and security events.'],
         ];
 
         return $catalog;
@@ -167,22 +232,35 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
 
         $defaults = [
             'viewer' => ['view', 'download'],
-            'admin'  => ['view', 'download', 'edit', 'inventory_manage', 'manage_rooms', 'inventory_transfers'],
+            'admin'  => [
+                'view',
+                'download',
+                'edit',
+                'inventory_manage',
+                'inventory_transfers',
+                'manage_rooms',
+                'manage_users',
+                'manage_sectors',
+                'notifications_admin',
+                'view_audit',
+            ],
         ];
 
-        try {
-            $pdo = get_pdo('core');
-            $stmt = $pdo->prepare('SELECT rp.permission_key
-                                     FROM role_permissions rp
-                                     JOIN roles r ON r.id = rp.role_id
-                                    WHERE r.key_slug = :role AND rp.granted = 1');
-            $stmt->execute([':role' => $roleKey]);
-            $perms = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
-            if ($perms) {
-                return $cache[$roleKey] = array_values(array_unique(array_map('strval', $perms)));
+        $pdo = core_pdo_optional();
+        if ($pdo) {
+            try {
+                $stmt = $pdo->prepare('SELECT rp.permission_key
+                                         FROM role_permissions rp
+                                         JOIN roles r ON r.id = rp.role_id
+                                        WHERE r.key_slug = :role AND rp.granted = 1');
+                $stmt->execute([':role' => $roleKey]);
+                $perms = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+                if ($perms) {
+                    return $cache[$roleKey] = array_values(array_unique(array_map('strval', $perms)));
+                }
+            } catch (Throwable $e) {
+                // fall back to defaults if the new tables are not migrated yet
             }
-        } catch (Throwable $e) {
-            // fall back to defaults if the new tables are not migrated yet
         }
 
         return $cache[$roleKey] = $defaults[$roleKey] ?? [];
@@ -198,19 +276,21 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
         }
 
         $cache[$userId] = [];
-        try {
-            $pdo = get_pdo('core');
-            $stmt = $pdo->prepare('SELECT permission_key, granted FROM user_permissions WHERE user_id = :id');
-            $stmt->execute([':id' => $userId]);
-            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                $perm = (string)($row['permission_key'] ?? '');
-                if ($perm === '') {
-                    continue;
+        $pdo = core_pdo_optional();
+        if ($pdo) {
+            try {
+                $stmt = $pdo->prepare('SELECT permission_key, granted FROM user_permissions WHERE user_id = :id');
+                $stmt->execute([':id' => $userId]);
+                foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                    $perm = (string)($row['permission_key'] ?? '');
+                    if ($perm === '') {
+                        continue;
+                    }
+                    $cache[$userId][$perm] = !empty($row['granted']);
                 }
-                $cache[$userId][$perm] = !empty($row['granted']);
+            } catch (Throwable $e) {
+                $cache[$userId] = [];
             }
-        } catch (Throwable $e) {
-            $cache[$userId] = [];
         }
 
         return $cache[$userId];
@@ -923,9 +1003,10 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
             return null;
         }
 
-        try {
-            $pdo = get_pdo('core');
-            $sql = "SELECT u.*,
+        $pdo = core_pdo_optional();
+        if ($pdo) {
+            try {
+                $sql = "SELECT u.*,
                            r.key_slug  AS role_slug,  r.label AS role_label,
                            s.key_slug  AS sector_slug, s.name AS sector_name
                     FROM users u
@@ -933,14 +1014,15 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
                     LEFT JOIN sectors s ON s.id = u.sector_id
                     WHERE u.email = ?
                     LIMIT 1";
-            $st = $pdo->prepare($sql);
-            $st->execute([$email]);
-            $u = $st->fetch();
-            if ($u) {
-                return $u;
+                $st = $pdo->prepare($sql);
+                $st->execute([$email]);
+                $u = $st->fetch();
+                if ($u) {
+                    return $u;
+                }
+            } catch (Throwable $e) {
+                // fall through to local lookup
             }
-        } catch (Throwable $e) {
-            // fall through to local lookup
         }
 
         try {
@@ -954,6 +1036,9 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
                 }
                 if (!isset($row['role_key']) && isset($row['role'])) {
                     $row['role_key'] = $row['role'];
+                }
+                if (!isset($row['pass_hash']) && isset($row['password_hash'])) {
+                    $row['pass_hash'] = $row['password_hash'];
                 }
                 return $row;
             }
@@ -978,16 +1063,19 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
             return $cache[$userId];
         }
 
-        try {
-            $stmt = get_pdo('core')->prepare('SELECT u.*, r.key_slug AS role_key FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ?');
-            $stmt->execute([$userId]);
-            $row = $stmt->fetch();
-            if ($row) {
-                $cache[$userId] = $row;
-                return $row;
+        $pdo = core_pdo_optional();
+        if ($pdo) {
+            try {
+                $stmt = $pdo->prepare('SELECT u.*, r.key_slug AS role_key FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ?');
+                $stmt->execute([$userId]);
+                $row = $stmt->fetch();
+                if ($row) {
+                    $cache[$userId] = $row;
+                    return $row;
+                }
+            } catch (Throwable $e) {
+                // ignore and attempt local fallback
             }
-        } catch (Throwable $e) {
-            // ignore and attempt local fallback
         }
 
         try {
@@ -998,6 +1086,9 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
             if ($row) {
                 if (!isset($row['role_key']) && isset($row['role'])) {
                     $row['role_key'] = $row['role'];
+                }
+                if (!isset($row['pass_hash']) && isset($row['password_hash'])) {
+                    $row['pass_hash'] = $row['password_hash'];
                 }
                 $cache[$userId] = $row;
                 return $row;
@@ -1092,8 +1183,11 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
 
 /** Fetch {id,email} options from CORE DB for a <select> list. */
 function core_user_options(): array {
+    $core = core_pdo_optional();
+    if (!$core) {
+        return [];
+    }
     try {
-        $core = get_pdo('core');
         $st = $core->query("SELECT id, email FROM users WHERE suspended_at IS NULL ORDER BY email");
         return $st->fetchAll();
     } catch (Throwable $e) {
@@ -1494,9 +1588,8 @@ function log_event(string $action, ?string $type = null, ?int $id = null, array 
     }
 
     // Get PDO (core)
-    try {
-        $pdo = get_pdo('core');
-    } catch (Throwable $e) {
+    $pdo = core_pdo_optional();
+    if (!$pdo) {
         return; // If logging DB is down, never break the app
     }
 

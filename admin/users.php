@@ -2,8 +2,16 @@
 require_once __DIR__ . '/../helpers.php';
 require_perm('manage_users');
 
-$corePdo = get_pdo('core');
+$corePdo = core_pdo_optional();
 $appsPdo = get_pdo();
+
+if (!$corePdo) {
+    $title = 'Manage Users';
+    include __DIR__ . '/../includes/header.php';
+    echo '<section class="card"><div class="card-body"><div class="flash flash-error">Core user database unavailable. Check CORE_* settings or run the migrations.</div></div></section>';
+    include __DIR__ . '/../includes/footer.php';
+    return;
+}
 
 $errors = [];
 $permissions = permission_catalog();

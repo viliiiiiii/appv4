@@ -20,8 +20,7 @@ function hv($arr, $k, $def='') { return isset($arr[$k]) ? (string)$arr[$k] : $de
 
 /* ---------- env ---------- */
 $pdo = get_pdo();
-$core = null;
-try { $core = get_pdo('core'); } catch (Throwable $e) { /* optional */ }
+$core = core_pdo_optional();
 
 /* ---------- robust schema detection ---------- */
 function diag_current_db(PDO $pdo): string {

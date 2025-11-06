@@ -22,18 +22,20 @@ if (isset($_GET['action']) && $_GET['action'] === 'by_building') {
 }
 
 $pdo = get_pdo();
-$corePdo = get_pdo('core');
+$corePdo = core_pdo_optional();
 $sectors = [];
 $sectorLookup = [];
-try {
-    $sectors = $corePdo->query('SELECT id, name FROM sectors ORDER BY name')->fetchAll();
-    foreach ($sectors as $sector) {
-        if (isset($sector['id'])) {
-            $sectorLookup[(int)$sector['id']] = $sector;
+if ($corePdo) {
+    try {
+        $sectors = $corePdo->query('SELECT id, name FROM sectors ORDER BY name')->fetchAll();
+        foreach ($sectors as $sector) {
+            if (isset($sector['id'])) {
+                $sectorLookup[(int)$sector['id']] = $sector;
+            }
         }
+    } catch (Throwable $e) {
+        $sectors = [];
     }
-} catch (Throwable $e) {
-    $sectors = [];
 }
 $errors = [];
 $selectedBuilding = (int)($_GET['building'] ?? 0);

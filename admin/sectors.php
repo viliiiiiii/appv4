@@ -2,7 +2,14 @@
 require_once __DIR__ . '/../helpers.php';
 require_perm('manage_sectors');
 
-$corePdo = get_pdo('core');
+$corePdo = core_pdo_optional();
+if (!$corePdo) {
+    $title = 'Sectors';
+    include __DIR__ . '/../includes/header.php';
+    echo '<section class="card"><div class="card-body"><div class="flash flash-error">Core database unavailable. Sector management requires the CORE schema.</div></div></section>';
+    include __DIR__ . '/../includes/footer.php';
+    return;
+}
 $errors = [];
 $managerOptions = core_user_options();
 $managerLookup = [];

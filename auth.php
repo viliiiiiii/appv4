@@ -23,47 +23,83 @@ function attempt_login(string $email, string $password): bool {
     // --- 2) Legacy fallback (apps DB) — optional one-time bridge
     try {
         $pdo = get_pdo('apps');
-        $st = $pdo->prepare("SELECT id, email, pass_hash FROM users WHERE email = ? LIMIT 1");
-        $st->execute([$email]);
-        $legacy = $st->fetch();
+        $passwordColumn = apps_users_password_column($pdo);
+        if ($passwordColumn !== null) {
+            $sql = sprintf(
+                'SELECT id, email, role, %s AS pass_hash FROM users WHERE email = ? LIMIT 1',
+                $passwordColumn
+            );
+            $st = $pdo->prepare($sql);
+            $st->execute([$email]);
+            $legacy = $st->fetch();
+        } else {
+            $legacy = null;
+        }
     } catch (Throwable $e) {
         $legacy = null;
     }
 
     if ($legacy && !empty($legacy['pass_hash']) && password_verify($password, (string)$legacy['pass_hash'])) {
         // Seed into CORE if missing, default to 'admin' role (fallback to first role if admin missing)
-        try {
-            $core = get_pdo('core');
-            $roleId = (int)($core->query("SELECT id FROM roles WHERE key_slug='admin'")->fetchColumn() ?: 0);
-            if (!$roleId) {
-                $roleId = (int)($core->query("SELECT id FROM roles LIMIT 1")->fetchColumn() ?: 0);
+        $core = core_pdo_optional();
+        if ($core) {
+            try {
+                $roleId = (int)($core->query("SELECT id FROM roles WHERE key_slug='admin'")->fetchColumn() ?: 0);
+                if (!$roleId) {
+                    $roleId = (int)($core->query("SELECT id FROM roles LIMIT 1")->fetchColumn() ?: 0);
+                }
+                if ($roleId) {
+                    $ins = $core->prepare("INSERT IGNORE INTO users (email, pass_hash, role_id) VALUES (?, ?, ?)");
+                    $ins->execute([$legacy['email'], $legacy['pass_hash'], $roleId]);
+                }
+                // Fetch the now-seeded CORE user
+                $user = core_find_user_by_email($email);
+                if ($user) {
+                    auth_login((int)$user['id']);
+                    log_event('login', 'user', (int)$user['id'], ['source' => 'legacy_seed']);
+                    return true;
+                }
+            } catch (Throwable $e) {
+                // If CORE unavailable, keep legacy session for compatibility (not ideal)
             }
-            if ($roleId) {
-                $ins = $core->prepare("INSERT IGNORE INTO users (email, pass_hash, role_id) VALUES (?, ?, ?)");
-                $ins->execute([$legacy['email'], $legacy['pass_hash'], $roleId]);
-            }
-            // Fetch the now-seeded CORE user
-            $user = core_find_user_by_email($email);
-            if ($user) {
-                auth_login((int)$user['id']);
-                log_event('login', 'user', (int)$user['id'], ['source' => 'legacy_seed']);
-                return true;
-            }
-        } catch (Throwable $e) {
-            // If CORE unavailable, keep legacy session for compatibility (not ideal)
         }
 
         // Last-resort: legacy session payload (avoid if possible, but keeps the app usable)
         $_SESSION['user'] = [
-            'id'    => (int)$legacy['id'],
-            'email' => (string)$legacy['email'],
-            // no role info here; permissions will be minimal
+            'id'        => (int)$legacy['id'],
+            'email'     => (string)$legacy['email'],
+            'role'      => (string)($legacy['role'] ?? ''),
+            'role_key'  => (string)($legacy['role'] ?? ''),
+            'role_slug' => (string)($legacy['role'] ?? ''),
         ];
         log_event('login', 'user', (int)$legacy['id'], ['source' => 'legacy_session']);
         return true;
     }
 
     return false;
+}
+
+function apps_users_password_column(PDO $pdo): ?string {
+    static $cache = null;
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    try {
+        $stmt = $pdo->query("SHOW COLUMNS FROM users LIKE 'pass_hash'");
+        if ($stmt && $stmt->fetch()) {
+            return $cache = 'pass_hash';
+        }
+
+        $stmt = $pdo->query("SHOW COLUMNS FROM users LIKE 'password_hash'");
+        if ($stmt && $stmt->fetch()) {
+            return $cache = 'password_hash';
+        }
+    } catch (Throwable $e) {
+        // ignore and fall through to null
+    }
+
+    return $cache = null;
 }
 
 /** Sign the user out and redirect */
