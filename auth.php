@@ -26,7 +26,7 @@ function attempt_login(string $email, string $password): bool {
         $passwordColumn = apps_users_password_column($pdo);
         if ($passwordColumn !== null) {
             $sql = sprintf(
-                'SELECT id, email, %s AS pass_hash FROM users WHERE email = ? LIMIT 1',
+                'SELECT id, email, role, %s AS pass_hash FROM users WHERE email = ? LIMIT 1',
                 $passwordColumn
             );
             $st = $pdo->prepare($sql);
@@ -64,9 +64,11 @@ function attempt_login(string $email, string $password): bool {
 
         // Last-resort: legacy session payload (avoid if possible, but keeps the app usable)
         $_SESSION['user'] = [
-            'id'    => (int)$legacy['id'],
-            'email' => (string)$legacy['email'],
-            // no role info here; permissions will be minimal
+            'id'        => (int)$legacy['id'],
+            'email'     => (string)$legacy['email'],
+            'role'      => (string)($legacy['role'] ?? ''),
+            'role_key'  => (string)($legacy['role'] ?? ''),
+            'role_slug' => (string)($legacy['role'] ?? ''),
         ];
         log_event('login', 'user', (int)$legacy['id'], ['source' => 'legacy_session']);
         return true;
