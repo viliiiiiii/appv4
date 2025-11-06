@@ -12,7 +12,7 @@ require_login();
 // error_reporting(E_ALL);
 
 $appsPdo = get_pdo();        // APPS (punchlist) DB
-$corePdo = get_pdo('core');  // CORE (users/roles/sectors/activity) DB — may be same as APPS if not split
+$corePdo = get_pdo('core', false);  // CORE (users/roles/sectors/activity) DB — may be same as APPS if not split
 
 $canManage    = can('inventory_manage');
 $canSign      = $canManage || can('inventory_transfers');

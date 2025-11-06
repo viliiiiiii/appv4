@@ -111,7 +111,7 @@ function notif_delivery_email(int $userId): ?string {
 
     $email = null;
     try {
-        $core = get_pdo('core');
+        $core = get_pdo('core', false);
         $stmt = $core->prepare('SELECT notification_email, email FROM users WHERE id = ? LIMIT 1');
         $stmt->execute([$userId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);

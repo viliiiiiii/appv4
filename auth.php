@@ -42,7 +42,7 @@ function attempt_login(string $email, string $password): bool {
     if ($legacy && !empty($legacy['pass_hash']) && password_verify($password, (string)$legacy['pass_hash'])) {
         // Seed into CORE if missing, default to 'admin' role (fallback to first role if admin missing)
         try {
-            $core = get_pdo('core');
+            $core = get_pdo('core', false);
             $roleId = (int)($core->query("SELECT id FROM roles WHERE key_slug='admin'")->fetchColumn() ?: 0);
             if (!$roleId) {
                 $roleId = (int)($core->query("SELECT id FROM roles LIMIT 1")->fetchColumn() ?: 0);

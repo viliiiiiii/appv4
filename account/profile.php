@@ -14,7 +14,7 @@ function profile_resolve_user_store(): array {
 
     // Force "core" as the authoritative users DB.
     // Assumes get_pdo('core') is configured for your core_db database.
-    $pdo = get_pdo('core');
+    $pdo = get_pdo('core', false);
 
     // Sanity check: make sure core.users looks like we expect
     $cols = [];
@@ -101,7 +101,7 @@ function profile_sync_shadow_email(int $userId, string $email, string $sourceSch
 {
     if ($sourceSchema !== 'core') {
         try {
-            $core = get_pdo('core');
+            $core = get_pdo('core', false);
             $stmt = $core->prepare('UPDATE `users` SET `email` = ? WHERE `id` = ?');
             $stmt->execute([$email, $userId]);
         } catch (Throwable $e) {
@@ -121,7 +121,7 @@ function profile_sync_shadow_password(int $userId, string $hash, string $sourceS
 {
     if ($sourceSchema !== 'core') {
         try {
-            $core = get_pdo('core');
+            $core = get_pdo('core', false);
             $stmt = $core->prepare('UPDATE `users` SET `pass_hash` = ? WHERE `id` = ?');
             $stmt->execute([$hash, $userId]);
         } catch (Throwable $e) {
@@ -260,7 +260,7 @@ function profile_summarize_user_agent(?string $ua): string
 function fetch_recent_security_events(int $userId, int $limit = 6): array
 {
     try {
-        $pdo = get_pdo('core');
+        $pdo = get_pdo('core', false);
     } catch (Throwable $e) {
         return [];
     }

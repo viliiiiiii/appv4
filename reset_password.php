@@ -37,7 +37,7 @@ if (is_post()) {
     }
 
     if (empty($errors) && $user) {
-        $pdo  = get_pdo('core');
+        $pdo  = get_pdo('core', false);
         $hash = password_hash($new, PASSWORD_DEFAULT);
         $stmt = $pdo->prepare('UPDATE users SET pass_hash=:h, updated_at=NOW() WHERE id=:id');
         $stmt->execute([':h' => $hash, ':id' => (int)$user['id']]);

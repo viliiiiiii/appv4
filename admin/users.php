@@ -2,7 +2,7 @@
 require_once __DIR__ . '/../helpers.php';
 require_perm('manage_users');
 
-$corePdo = get_pdo('core');
+$corePdo = get_pdo('core', false);
 $appsPdo = get_pdo();
 
 $errors = [];

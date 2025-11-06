@@ -200,7 +200,7 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
         ];
 
         try {
-            $pdo = get_pdo('core');
+            $pdo = get_pdo('core', false);
             $stmt = $pdo->prepare('SELECT rp.permission_key
                                      FROM role_permissions rp
                                      JOIN roles r ON r.id = rp.role_id
@@ -228,7 +228,7 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
 
         $cache[$userId] = [];
         try {
-            $pdo = get_pdo('core');
+            $pdo = get_pdo('core', false);
             $stmt = $pdo->prepare('SELECT permission_key, granted FROM user_permissions WHERE user_id = :id');
             $stmt->execute([':id' => $userId]);
             foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -1008,7 +1008,7 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
         }
 
         try {
-            $stmt = get_pdo('core')->prepare('SELECT u.*, r.key_slug AS role_key FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ?');
+            $stmt = get_pdo('core', false)->prepare('SELECT u.*, r.key_slug AS role_key FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ?');
             $stmt->execute([$userId]);
             $row = $stmt->fetch();
             if ($row) {
@@ -1122,7 +1122,7 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
 /** Fetch {id,email} options from CORE DB for a <select> list. */
 function core_user_options(): array {
     try {
-        $core = get_pdo('core');
+        $core = get_pdo('core', false);
         $st = $core->query("SELECT id, email FROM users WHERE suspended_at IS NULL ORDER BY email");
         return $st->fetchAll();
     } catch (Throwable $e) {
@@ -1524,7 +1524,7 @@ function log_event(string $action, ?string $type = null, ?int $id = null, array 
 
     // Get PDO (core)
     try {
-        $pdo = get_pdo('core');
+        $pdo = get_pdo('core', false);
     } catch (Throwable $e) {
         return; // If logging DB is down, never break the app
     }
