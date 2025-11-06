@@ -2,7 +2,7 @@
 require_once __DIR__ . '/../helpers.php';
 require_perm('manage_sectors');
 
-$corePdo = get_pdo('core');
+$corePdo = get_pdo('core', false);
 $errors = [];
 $managerOptions = core_user_options();
 $managerLookup = [];

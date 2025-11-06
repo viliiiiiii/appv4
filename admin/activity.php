@@ -2,7 +2,7 @@
 require_once __DIR__ . '/../helpers.php';
 require_perm('view_audit');
 
-$corePdo = get_pdo('core');
+$corePdo = get_pdo('core', false);
 
 $filters = [
     'user_id' => isset($_GET['user_id']) && $_GET['user_id'] !== '' ? (int)$_GET['user_id'] : null,

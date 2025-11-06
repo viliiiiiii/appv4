@@ -22,7 +22,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'by_building') {
 }
 
 $pdo = get_pdo();
-$corePdo = get_pdo('core');
+$corePdo = get_pdo('core', false);
 $sectors = [];
 $sectorLookup = [];
 try {
