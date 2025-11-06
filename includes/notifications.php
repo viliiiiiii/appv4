@@ -110,25 +110,27 @@ function notif_delivery_email(int $userId): ?string {
     }
 
     $email = null;
-    try {
-        $core = get_pdo('core', false);
-        $stmt = $core->prepare('SELECT notification_email, email FROM users WHERE id = ? LIMIT 1');
-        $stmt->execute([$userId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row) {
-            $candidates = [
-                $row['notification_email'] ?? null,
-                $row['email'] ?? null,
-            ];
-            foreach ($candidates as $candidate) {
-                if ($candidate && filter_var($candidate, FILTER_VALIDATE_EMAIL)) {
-                    $email = (string)$candidate;
-                    break;
+    $core = core_pdo_optional();
+    if ($core) {
+        try {
+            $stmt = $core->prepare('SELECT notification_email, email FROM users WHERE id = ? LIMIT 1');
+            $stmt->execute([$userId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($row) {
+                $candidates = [
+                    $row['notification_email'] ?? null,
+                    $row['email'] ?? null,
+                ];
+                foreach ($candidates as $candidate) {
+                    if ($candidate && filter_var($candidate, FILTER_VALIDATE_EMAIL)) {
+                        $email = (string)$candidate;
+                        break;
+                    }
                 }
             }
+        } catch (Throwable $e) {
+            $email = null;
         }
-    } catch (Throwable $e) {
-        $email = null;
     }
 
     if ($email === null) {

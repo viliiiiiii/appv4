@@ -309,15 +309,22 @@ function notes_save_uploaded_photo(int $noteId, int $position, string $fieldName
 
 /* ---------- shares & authorization ---------- */
 function notes_all_users(): array {
-    $pdo = get_pdo('core', false); // your CORE users
+    $pdo = core_pdo_optional(); // your CORE users
+    if ($pdo) {
+        try {
+            $st = $pdo->query('SELECT id, email FROM users ORDER BY email');
+            return $st->fetchAll() ?: [];
+        } catch (Throwable $e) {
+            // fall back to apps below
+        }
+    }
+
     try {
-        $st = $pdo->query('SELECT id, email FROM users ORDER BY email');
-        return $st->fetchAll() ?: [];
-    } catch (Throwable $e) {
-        // try app DB as fallback
         $pdo = get_pdo();
         $st = $pdo->query('SELECT id, email FROM users ORDER BY email');
         return $st->fetchAll() ?: [];
+    } catch (Throwable $e) {
+        return [];
     }
 }
 
@@ -387,15 +394,17 @@ function notes_fetch_users_map(array $ids): array {
     $map = [];
     $remaining = $ids;
 
-    try {
-        $core = get_pdo('core', false);
-        $coreMap = notes_fetch_users_from($core, $remaining);
-        $map = $coreMap;
-        if ($coreMap) {
-            $remaining = array_values(array_diff($remaining, array_keys($coreMap)));
+    $core = core_pdo_optional();
+    if ($core) {
+        try {
+            $coreMap = notes_fetch_users_from($core, $remaining);
+            $map = $coreMap;
+            if ($coreMap) {
+                $remaining = array_values(array_diff($remaining, array_keys($coreMap)));
+            }
+        } catch (Throwable $e) {
+            // ignore; fall back to apps DB
         }
-    } catch (Throwable $e) {
-        // ignore; fall back to apps DB
     }
 
     if ($remaining) {

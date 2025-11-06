@@ -12,7 +12,8 @@ require_login();
 // error_reporting(E_ALL);
 
 $appsPdo = get_pdo();        // APPS (punchlist) DB
-$corePdo = get_pdo('core', false);  // CORE (users/roles/sectors/activity) DB — may be same as APPS if not split
+$corePdo = core_pdo_optional();      // CORE (users/roles/sectors/activity) DB — may be same as APPS if not split
+$coreAvailable = $corePdo instanceof PDO;
 
 $canManage    = can('inventory_manage');
 $canSign      = $canManage || can('inventory_transfers');
@@ -198,17 +199,22 @@ if (is_post()) {
                             $flashMessage = 'Stock updated.';
                             $flashType = 'success';
                             if ($requiresSignature) {
-                                try {
-                                    $service = new TransferService($appsPdo, $corePdo);
-                                    $doc = $service->generateForMovement($movementId);
-                                    if ($doc) {
-                                        $flashMessage = 'Stock updated and transfer form generated.';
-                                    } else {
-                                        $flashMessage = 'Stock updated. Transfer form will be available once generated.';
+                                if ($coreAvailable) {
+                                    try {
+                                        $service = new TransferService($appsPdo, $corePdo);
+                                        $doc = $service->generateForMovement($movementId);
+                                        if ($doc) {
+                                            $flashMessage = 'Stock updated and transfer form generated.';
+                                        } else {
+                                            $flashMessage = 'Stock updated. Transfer form will be available once generated.';
+                                        }
+                                    } catch (Throwable $e) {
+                                        $flashMessage = 'Stock updated, but transfer form generation failed.';
+                                        try { error_log('inventory transfer form failed: ' . $e->getMessage()); } catch (Throwable $_) {}
+                                        $flashType = 'error';
                                     }
-                                } catch (Throwable $e) {
-                                    $flashMessage = 'Stock updated, but transfer form generation failed.';
-                                    try { error_log('inventory transfer form failed: ' . $e->getMessage()); } catch (Throwable $_) {}
+                                } else {
+                                    $flashMessage = 'Stock updated. Configure the core database to generate transfer forms.';
                                     $flashType = 'error';
                                 }
                             }
@@ -229,10 +235,14 @@ if (is_post()) {
 
 // --- Fetch sectors (CORE) ---
 $sectorOptions = [];
-try {
-    $sectorOptions = $corePdo->query('SELECT id, name, key_slug, color_hex, contact_email, contact_phone, manager_user_id FROM sectors ORDER BY name')->fetchAll();
-} catch (Throwable $e) {
-    $errors[] = 'Sectors table missing in CORE DB (or query failed).';
+if ($coreAvailable) {
+    try {
+        $sectorOptions = $corePdo->query('SELECT id, name, key_slug, color_hex, contact_email, contact_phone, manager_user_id FROM sectors ORDER BY name')->fetchAll();
+    } catch (Throwable $e) {
+        $errors[] = 'Sectors table missing in CORE DB (or query failed).';
+    }
+} else {
+    $errors[] = 'CORE database unavailable. Sector-specific filters are limited.';
 }
 $sectorMap = [];
 foreach ((array)$sectorOptions as $sectorRow) {

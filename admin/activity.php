@@ -2,7 +2,8 @@
 require_once __DIR__ . '/../helpers.php';
 require_perm('view_audit');
 
-$corePdo = get_pdo('core', false);
+$corePdo = core_pdo_optional();
+$error = null;
 
 $filters = [
     'user_id' => isset($_GET['user_id']) && $_GET['user_id'] !== '' ? (int)$_GET['user_id'] : null,
@@ -22,24 +23,32 @@ if ($filters['from'] !== '') { $where[] = 'al.ts >= :from'; $params[':from'] = $
 if ($filters['to']   !== '') { $where[] = 'al.ts <= :to';   $params[':to']   = $filters['to'] . ' 23:59:59'; }
 $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
-$countStmt = $corePdo->prepare("SELECT COUNT(*) FROM activity_log al $whereSql");
-$countStmt->execute($params);
-$total = (int)$countStmt->fetchColumn();
+$rows = [];
+$total = 0;
+$userOptions = [];
 
-$sql = "SELECT al.*, u.email
+if ($corePdo) {
+    $countStmt = $corePdo->prepare("SELECT COUNT(*) FROM activity_log al $whereSql");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+
+    $sql = "SELECT al.*, u.email
         FROM activity_log al
         LEFT JOIN users u ON u.id = al.user_id
         $whereSql
         ORDER BY al.id DESC
         LIMIT :limit OFFSET :offset";
-$stmt = $corePdo->prepare($sql);
-foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
-$stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
-$stmt->bindValue(':offset', ($page - 1) * $perPage, PDO::PARAM_INT);
-$stmt->execute();
-$rows = $stmt->fetchAll();
+    $stmt = $corePdo->prepare($sql);
+    foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
+    $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', ($page - 1) * $perPage, PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
 
-$userOptions = $corePdo->query('SELECT id, email FROM users ORDER BY email')->fetchAll();
+    $userOptions = $corePdo->query('SELECT id, email FROM users ORDER BY email')->fetchAll();
+} else {
+    $error = 'Core activity log unavailable. Verify CORE_* database settings.';
+}
 
 function render_ip($binary): string {
     if ($binary === null || $binary === '') return '';
@@ -60,6 +69,10 @@ include __DIR__ . '/../includes/header.php';
       <span class="badge">Total: <?php echo number_format($total); ?></span>
     </div>
   </div>
+
+  <?php if ($error): ?>
+    <div class="flash flash-error"><?php echo sanitize($error); ?></div>
+  <?php endif; ?>
 
   <form method="get" class="filters">
     <label>User

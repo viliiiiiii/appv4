@@ -145,7 +145,10 @@ $appDbOk = !isset($report['db']['app']['__error__']) && !empty($report['db']['ap
 
 /* DB: core */
 $report['db']['core'] = try_call(function() use (&$pdoCore, $deep) {
-  $pdoCore = get_pdo('core', false);
+  $pdoCore = core_pdo_optional();
+  if (!$pdoCore) {
+    throw new RuntimeException('Core database unavailable');
+  }
   $t0 = microtime(true);
   $one = $pdoCore->query('SELECT 1')->fetchColumn();
   $ms = round((microtime(true)-$t0)*1000,1);

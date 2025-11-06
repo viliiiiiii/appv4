@@ -37,13 +37,42 @@ if (is_post()) {
     }
 
     if (empty($errors) && $user) {
-        $pdo  = get_pdo('core', false);
         $hash = password_hash($new, PASSWORD_DEFAULT);
-        $stmt = $pdo->prepare('UPDATE users SET pass_hash=:h, updated_at=NOW() WHERE id=:id');
-        $stmt->execute([':h' => $hash, ':id' => (int)$user['id']]);
+        $updated = false;
 
-        log_event('password_change', 'user', (int)$user['id']);
-        $ok = 'Password updated successfully.';
+        $corePdo = core_pdo_optional();
+        if ($corePdo) {
+            try {
+                $stmt = $corePdo->prepare('UPDATE users SET pass_hash=:h, updated_at=NOW() WHERE id=:id');
+                $stmt->execute([':h' => $hash, ':id' => (int)$user['id']]);
+                $updated = true;
+            } catch (Throwable $e) {
+            }
+        }
+
+        try {
+            $apps = get_pdo();
+            try {
+                $stmt = $apps->prepare('UPDATE users SET password_hash=:h WHERE id=:id');
+                $stmt->execute([':h' => $hash, ':id' => (int)$user['id']]);
+                $updated = true;
+            } catch (Throwable $e) {
+                try {
+                    $stmt = $apps->prepare('UPDATE users SET pass_hash=:h WHERE id=:id');
+                    $stmt->execute([':h' => $hash, ':id' => (int)$user['id']]);
+                    $updated = true;
+                } catch (Throwable $_) {
+                }
+            }
+        } catch (Throwable $e) {
+        }
+
+        if ($updated) {
+            log_event('password_change', 'user', (int)$user['id']);
+            $ok = 'Password updated successfully.';
+        } else {
+            $errors['general'] = 'Could not update your password. Please contact support.';
+        }
     }
 }
 
@@ -56,6 +85,9 @@ include __DIR__ . '/includes/header.php';
     <?php endif; ?>
     <?php if (!empty($errors['csrf'])): ?>
         <div class="flash flash-error"><?php echo sanitize($errors['csrf']); ?></div>
+    <?php endif; ?>
+    <?php if (!empty($errors['general'])): ?>
+        <div class="flash flash-error"><?php echo sanitize($errors['general']); ?></div>
     <?php endif; ?>
 
     <section class="card">
