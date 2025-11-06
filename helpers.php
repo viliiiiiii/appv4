@@ -76,7 +76,7 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
      * Return a PDO connection to either the application DB ("apps" = punchlist)
      * or the core governance DB ("core" = users/roles/activity).
      */
-    function get_pdo(string $which = 'apps'): PDO {
+    function get_pdo(string $which = 'apps', bool $allowFallback = true): PDO {
         static $pool     = [];
         static $failures = [];
 
@@ -85,11 +85,20 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
         }
 
         if (isset($failures[$which])) {
-            if ($which === 'apps') {
+            $previous = $failures[$which];
+            if ($which === 'apps' || !$allowFallback) {
+                if ($previous instanceof Throwable) {
+                    throw new RuntimeException(
+                        'Database connection previously failed: ' . $previous->getMessage(),
+                        0,
+                        $previous
+                    );
+                }
+
                 throw new RuntimeException('Database connection previously failed.');
             }
 
-            return $pool[$which] = get_pdo('apps');
+            return $pool[$which] = get_pdo('apps', $allowFallback);
         }
 
         if ($which === 'core') {
@@ -123,7 +132,15 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
                     error_log('get_pdo failed for ' . $which . ': ' . $e->getMessage());
                 } catch (Throwable $_) {}
 
-                return $pool[$which] = get_pdo('apps');
+                if (!$allowFallback) {
+                    if ($e instanceof Throwable) {
+                        throw new RuntimeException('Unable to connect to database: ' . $e->getMessage(), 0, $e);
+                    }
+
+                    throw new RuntimeException('Unable to connect to database.');
+                }
+
+                return $pool[$which] = get_pdo('apps', $allowFallback);
             }
 
             if ($e instanceof RuntimeException) {
@@ -151,6 +168,7 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
             'manage_sectors'       => ['label' => 'Manage sectors',           'description' => 'Create sectors, update contact info, and assign leads.'],
             'manage_rooms'         => ['label' => 'Manage rooms',             'description' => 'Maintain building/room directory and metadata.'],
             'notifications_admin'  => ['label' => 'Notifications admin',      'description' => 'Adjust notification defaults and deliverability.'],
+            'view_audit'           => ['label' => 'View audit log',           'description' => 'Review activity log entries and security events.'],
         ];
 
         return $catalog;
@@ -167,7 +185,18 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
 
         $defaults = [
             'viewer' => ['view', 'download'],
-            'admin'  => ['view', 'download', 'edit', 'inventory_manage', 'manage_rooms', 'inventory_transfers'],
+            'admin'  => [
+                'view',
+                'download',
+                'edit',
+                'inventory_manage',
+                'inventory_transfers',
+                'manage_rooms',
+                'manage_users',
+                'manage_sectors',
+                'notifications_admin',
+                'view_audit',
+            ],
         ];
 
         try {
@@ -924,7 +953,7 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
         }
 
         try {
-            $pdo = get_pdo('core');
+            $pdo = get_pdo('core', false);
             $sql = "SELECT u.*,
                            r.key_slug  AS role_slug,  r.label AS role_label,
                            s.key_slug  AS sector_slug, s.name AS sector_name
