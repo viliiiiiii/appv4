@@ -23,9 +23,18 @@ function attempt_login(string $email, string $password): bool {
     // --- 2) Legacy fallback (apps DB) — optional one-time bridge
     try {
         $pdo = get_pdo('apps');
-        $st = $pdo->prepare("SELECT id, email, pass_hash FROM users WHERE email = ? LIMIT 1");
-        $st->execute([$email]);
-        $legacy = $st->fetch();
+        $passwordColumn = apps_users_password_column($pdo);
+        if ($passwordColumn !== null) {
+            $sql = sprintf(
+                'SELECT id, email, %s AS pass_hash FROM users WHERE email = ? LIMIT 1',
+                $passwordColumn
+            );
+            $st = $pdo->prepare($sql);
+            $st->execute([$email]);
+            $legacy = $st->fetch();
+        } else {
+            $legacy = null;
+        }
     } catch (Throwable $e) {
         $legacy = null;
     }
@@ -64,6 +73,29 @@ function attempt_login(string $email, string $password): bool {
     }
 
     return false;
+}
+
+function apps_users_password_column(PDO $pdo): ?string {
+    static $cache = null;
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    try {
+        $stmt = $pdo->query("SHOW COLUMNS FROM users LIKE 'pass_hash'");
+        if ($stmt && $stmt->fetch()) {
+            return $cache = 'pass_hash';
+        }
+
+        $stmt = $pdo->query("SHOW COLUMNS FROM users LIKE 'password_hash'");
+        if ($stmt && $stmt->fetch()) {
+            return $cache = 'password_hash';
+        }
+    } catch (Throwable $e) {
+        // ignore and fall through to null
+    }
+
+    return $cache = null;
 }
 
 /** Sign the user out and redirect */
