@@ -168,6 +168,7 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
             'manage_sectors'       => ['label' => 'Manage sectors',           'description' => 'Create sectors, update contact info, and assign leads.'],
             'manage_rooms'         => ['label' => 'Manage rooms',             'description' => 'Maintain building/room directory and metadata.'],
             'notifications_admin'  => ['label' => 'Notifications admin',      'description' => 'Adjust notification defaults and deliverability.'],
+            'view_audit'           => ['label' => 'View audit log',           'description' => 'Review activity log entries and security events.'],
         ];
 
         return $catalog;
@@ -184,7 +185,18 @@ if (!defined('HELPERS_BOOTSTRAPPED')) {
 
         $defaults = [
             'viewer' => ['view', 'download'],
-            'admin'  => ['view', 'download', 'edit', 'inventory_manage', 'manage_rooms', 'inventory_transfers'],
+            'admin'  => [
+                'view',
+                'download',
+                'edit',
+                'inventory_manage',
+                'inventory_transfers',
+                'manage_rooms',
+                'manage_users',
+                'manage_sectors',
+                'notifications_admin',
+                'view_audit',
+            ],
         ];
 
         try {
